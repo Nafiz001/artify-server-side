@@ -6,11 +6,9 @@ const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 const app = express();
 const port = process.env.PORT || 3000;
 
-// Middleware
 app.use(cors());
 app.use(express.json());
 
-// Security headers middleware
 app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('X-Frame-Options', 'DENY');
@@ -19,14 +17,43 @@ app.use((req, res, next) => {
   next();
 });
 
-// Request logging middleware
 app.use((req, res, next) => {
   const timestamp = new Date().toISOString();
   console.log(`[${timestamp}] ${req.method} ${req.path}`);
   next();
 });
 
-// Validation middleware
+const rateLimitMap = new Map();
+const RATE_LIMIT_WINDOW = 60000;
+const MAX_REQUESTS = 100;
+
+app.use((req, res, next) => {
+  const ip = req.ip || req.connection.remoteAddress;
+  const now = Date.now();
+  
+  if (!rateLimitMap.has(ip)) {
+    rateLimitMap.set(ip, { count: 1, resetTime: now + RATE_LIMIT_WINDOW });
+    return next();
+  }
+  
+  const userData = rateLimitMap.get(ip);
+  
+  if (now > userData.resetTime) {
+    rateLimitMap.set(ip, { count: 1, resetTime: now + RATE_LIMIT_WINDOW });
+    return next();
+  }
+  
+  if (userData.count >= MAX_REQUESTS) {
+    return res.status(429).json({ 
+      error: 'Too many requests', 
+      message: 'Please try again later' 
+    });
+  }
+  
+  userData.count++;
+  next();
+});
+
 const validateArtwork = (req, res, next) => {
   const { title, image, category, artistName, artistEmail } = req.body;
   
@@ -37,7 +64,6 @@ const validateArtwork = (req, res, next) => {
     });
   }
   
-  // Validate image URL format
   const urlPattern = /^https?:\/\/.+\.(jpg|jpeg|png|gif|webp)$/i;
   if (!urlPattern.test(image)) {
     return res.status(400).json({ 
@@ -46,7 +72,6 @@ const validateArtwork = (req, res, next) => {
     });
   }
   
-  // Validate email format
   const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
   if (!emailPattern.test(artistEmail)) {
     return res.status(400).json({ 
@@ -57,7 +82,6 @@ const validateArtwork = (req, res, next) => {
   next();
 };
 
-// Error handling middleware
 const errorHandler = (err, req, res, next) => {
   console.error(err.stack);
   res.status(500).json({ 
@@ -66,10 +90,8 @@ const errorHandler = (err, req, res, next) => {
   });
 };
 
-// MongoDB connection URI
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.sqaw1iw.mongodb.net/?appName=Cluster0`;
 
-// Create a MongoClient
 const client = new MongoClient(uri, {
   serverApi: {
     version: ServerApiVersion.v1,
@@ -84,7 +106,6 @@ app.get('/', (req, res) => {
 
 async function run() {
   try {
-    // Connect to MongoDB
     await client.connect();
     console.log("Connected to MongoDB!");
 
@@ -92,10 +113,7 @@ async function run() {
     const artworksCollection = db.collection('artworks');
     const usersCollection = db.collection('users');
     const favoritesCollection = db.collection('favorites');
-
-    // ==================== USER APIs ====================
     
-    // Create or get user
     app.post('/users', async (req, res) => {
       const newUser = req.body;
       const email = req.body.email;
@@ -110,9 +128,6 @@ async function run() {
       }
     });
 
-    // ==================== ARTWORK APIs ====================
-
-    // Get all artworks with pagination support
     app.get('/artworks', async (req, res) => {
       try {
         const page = parseInt(req.query.page) || 1;
@@ -138,7 +153,6 @@ async function run() {
       }
     });
 
-    // Get featured artworks (6 most recent for home page)
     app.get('/featured-artworks', async (req, res) => {
       const query = { visibility: 'Public' };
       const cursor = artworksCollection.find(query).sort({ createdAt: -1 }).limit(6);
@@ -146,7 +160,6 @@ async function run() {
       res.send(result);
     });
 
-    // Get latest artworks (alias for featured)
     app.get('/latest-artworks', async (req, res) => {
       const query = { visibility: 'Public' };
       const cursor = artworksCollection.find(query).sort({ createdAt: -1 }).limit(6);
@@ -154,7 +167,6 @@ async function run() {
       res.send(result);
     });
 
-    // Get artworks by user email (for My Gallery)
     app.get('/my-artworks/:email', async (req, res) => {
       const email = req.params.email;
       const query = { artistEmail: email };
@@ -163,7 +175,6 @@ async function run() {
       res.send(result);
     });
 
-    // Get single artwork by ID
     app.get('/artwork/:id', async (req, res) => {
       const id = req.params.id;
       const query = { _id: new ObjectId(id) };
@@ -171,7 +182,6 @@ async function run() {
       res.send(result);
     });
 
-    // Add new artwork
     app.post('/artworks', validateArtwork, async (req, res) => {
       try {
         const newArtwork = req.body;
@@ -184,7 +194,6 @@ async function run() {
       }
     });
 
-    // Update artwork
     app.patch('/artwork/:id', async (req, res) => {
       const id = req.params.id;
       const updatedArtwork = req.body;
@@ -196,7 +205,6 @@ async function run() {
       res.send(result);
     });
 
-    // Delete artwork
     app.delete('/artwork/:id', async (req, res) => {
       const id = req.params.id;
       const query = { _id: new ObjectId(id) };
@@ -204,7 +212,6 @@ async function run() {
       res.send(result);
     });
 
-    // Increase like count
     app.patch('/artwork/:id/like', async (req, res) => {
       const id = req.params.id;
       const query = { _id: new ObjectId(id) };
@@ -213,7 +220,6 @@ async function run() {
       res.send(result);
     });
 
-    // Search artworks by title or artist
     app.get('/artworks/search/:searchTerm', async (req, res) => {
       const searchTerm = req.params.searchTerm;
       const query = {
@@ -228,7 +234,6 @@ async function run() {
       res.send(result);
     });
 
-    // Filter artworks by category
     app.get('/artworks/category/:category', async (req, res) => {
       const category = req.params.category;
       const query = { visibility: 'Public', category: category };
@@ -236,10 +241,7 @@ async function run() {
       const result = await cursor.toArray();
       res.send(result);
     });
-
-    // ==================== FAVORITES APIs ====================
     
-    // Get total artwork count (for statistics)
     app.get('/stats/total-artworks', async (req, res) => {
       try {
         const total = await artworksCollection.countDocuments({ visibility: 'Public' });
@@ -249,7 +251,6 @@ async function run() {
       }
     });
 
-    // Get artwork count by category (for statistics)
     app.get('/stats/by-category', async (req, res) => {
       try {
         const categories = await artworksCollection.aggregate([
@@ -263,7 +264,6 @@ async function run() {
       }
     });
 
-    // Add to favorites
     app.post('/favorites', async (req, res) => {
       const favorite = req.body;
       const query = {
@@ -280,20 +280,17 @@ async function run() {
       }
     });
 
-    // Get user's favorites
     app.get('/favorites/:email', async (req, res) => {
       const email = req.params.email;
       const query = { userEmail: email };
       const favorites = await favoritesCollection.find(query).toArray();
       
-      // Get full artwork details for each favorite
       const artworkIds = favorites.map(fav => new ObjectId(fav.artworkId));
       const artworks = await artworksCollection.find({ _id: { $in: artworkIds } }).toArray();
       
       res.send(artworks);
     });
 
-    // Remove from favorites
     app.delete('/favorites', async (req, res) => {
       const { userEmail, artworkId } = req.body;
       const query = { userEmail: userEmail, artworkId: artworkId };
@@ -301,7 +298,6 @@ async function run() {
       res.send(result);
     });
 
-    // Ping to confirm connection
     await client.db("admin").command({ ping: 1 });
     console.log("Pinged your deployment. Successfully connected to MongoDB!");
 
@@ -312,7 +308,6 @@ async function run() {
 
 run().catch(console.dir);
 
-// Apply error handling middleware
 app.use(errorHandler);
 
 app.listen(port, () => {
