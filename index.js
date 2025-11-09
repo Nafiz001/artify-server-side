@@ -10,6 +10,13 @@ const port = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.json());
 
+// Request logging middleware
+app.use((req, res, next) => {
+  const timestamp = new Date().toISOString();
+  console.log(`[${timestamp}] ${req.method} ${req.path}`);
+  next();
+});
+
 // Validation middleware
 const validateArtwork = (req, res, next) => {
   const { title, image, category, artistName, artistEmail } = req.body;
