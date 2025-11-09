@@ -1,5 +1,18 @@
 {
+  "name": "artify-server-side",
+  "version": "1.0.0",
+  "description": "Backend server for Artisan's Echo art platform",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "nodemon index.js"
+  },
+  "keywords": ["art", "artworks", "gallery"],
+  "author": "",
+  "license": "ISC",
   "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^17.2.3",
     "express": "^5.1.0",
     "mongodb": "^7.0.0"
   }
