@@ -10,6 +10,46 @@ const port = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.json());
 
+// Validation middleware
+const validateArtwork = (req, res, next) => {
+  const { title, image, category, artistName, artistEmail } = req.body;
+  
+  if (!title || !image || !category || !artistName || !artistEmail) {
+    return res.status(400).json({ 
+      error: 'Missing required fields',
+      required: ['title', 'image', 'category', 'artistName', 'artistEmail']
+    });
+  }
+  
+  // Validate image URL format
+  const urlPattern = /^https?:\/\/.+\.(jpg|jpeg|png|gif|webp)$/i;
+  if (!urlPattern.test(image)) {
+    return res.status(400).json({ 
+      error: 'Invalid image URL format',
+      message: 'Image must be a valid URL ending with jpg, jpeg, png, gif, or webp'
+    });
+  }
+  
+  // Validate email format
+  const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailPattern.test(artistEmail)) {
+    return res.status(400).json({ 
+      error: 'Invalid email format'
+    });
+  }
+  
+  next();
+};
+
+// Error handling middleware
+const errorHandler = (err, req, res, next) => {
+  console.error(err.stack);
+  res.status(500).json({ 
+    error: 'Something went wrong!',
+    message: err.message 
+  });
+};
+
 // MongoDB connection URI
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.sqaw1iw.mongodb.net/?appName=Cluster0`;
 
@@ -98,12 +138,16 @@ async function run() {
     });
 
     // Add new artwork
-    app.post('/artworks', async (req, res) => {
-      const newArtwork = req.body;
-      newArtwork.createdAt = new Date();
-      newArtwork.likes = 0;
-      const result = await artworksCollection.insertOne(newArtwork);
-      res.send(result);
+    app.post('/artworks', validateArtwork, async (req, res) => {
+      try {
+        const newArtwork = req.body;
+        newArtwork.createdAt = new Date();
+        newArtwork.likes = 0;
+        const result = await artworksCollection.insertOne(newArtwork);
+        res.send(result);
+      } catch (error) {
+        res.status(500).json({ error: 'Failed to add artwork', message: error.message });
+      }
     });
 
     // Update artwork
@@ -209,6 +253,9 @@ async function run() {
 }
 
 run().catch(console.dir);
+
+// Apply error handling middleware
+app.use(errorHandler);
 
 app.listen(port, () => {
   console.log(`Server is running on port ${port}`);
