@@ -58,7 +58,7 @@ async function run() {
 
     // Get all public artworks (for Explore page)
     app.get('/artworks', async (req, res) => {
-      const query = { visibility: 'public' };
+      const query = { visibility: 'Public' };
       const cursor = artworksCollection.find(query).sort({ createdAt: -1 });
       const result = await cursor.toArray();
       res.send(result);
@@ -66,7 +66,15 @@ async function run() {
 
     // Get featured artworks (6 most recent for home page)
     app.get('/featured-artworks', async (req, res) => {
-      const query = { visibility: 'public' };
+      const query = { visibility: 'Public' };
+      const cursor = artworksCollection.find(query).sort({ createdAt: -1 }).limit(6);
+      const result = await cursor.toArray();
+      res.send(result);
+    });
+
+    // Get latest artworks (alias for featured)
+    app.get('/latest-artworks', async (req, res) => {
+      const query = { visibility: 'Public' };
       const cursor = artworksCollection.find(query).sort({ createdAt: -1 }).limit(6);
       const result = await cursor.toArray();
       res.send(result);
@@ -75,7 +83,7 @@ async function run() {
     // Get artworks by user email (for My Gallery)
     app.get('/my-artworks/:email', async (req, res) => {
       const email = req.params.email;
-      const query = { userEmail: email };
+      const query = { artistEmail: email };
       const cursor = artworksCollection.find(query).sort({ createdAt: -1 });
       const result = await cursor.toArray();
       res.send(result);
@@ -131,10 +139,10 @@ async function run() {
     app.get('/artworks/search/:searchTerm', async (req, res) => {
       const searchTerm = req.params.searchTerm;
       const query = {
-        visibility: 'public',
+        visibility: 'Public',
         $or: [
           { title: { $regex: searchTerm, $options: 'i' } },
-          { userName: { $regex: searchTerm, $options: 'i' } }
+          { artistName: { $regex: searchTerm, $options: 'i' } }
         ]
       };
       const cursor = artworksCollection.find(query);
@@ -145,7 +153,7 @@ async function run() {
     // Filter artworks by category
     app.get('/artworks/category/:category', async (req, res) => {
       const category = req.params.category;
-      const query = { visibility: 'public', category: category };
+      const query = { visibility: 'Public', category: category };
       const cursor = artworksCollection.find(query).sort({ createdAt: -1 });
       const result = await cursor.toArray();
       res.send(result);
