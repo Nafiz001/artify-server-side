@@ -112,12 +112,30 @@ async function run() {
 
     // ==================== ARTWORK APIs ====================
 
-    // Get all public artworks (for Explore page)
+    // Get all artworks with pagination support
     app.get('/artworks', async (req, res) => {
-      const query = { visibility: 'Public' };
-      const cursor = artworksCollection.find(query).sort({ createdAt: -1 });
-      const result = await cursor.toArray();
-      res.send(result);
+      try {
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 12;
+        const skip = (page - 1) * limit;
+        
+        const query = { visibility: 'Public' };
+        const cursor = artworksCollection.find(query).sort({ createdAt: -1 }).skip(skip).limit(limit);
+        const result = await cursor.toArray();
+        const total = await artworksCollection.countDocuments(query);
+        
+        res.send({
+          artworks: result,
+          pagination: {
+            currentPage: page,
+            totalPages: Math.ceil(total / limit),
+            totalArtworks: total,
+            limit
+          }
+        });
+      } catch (error) {
+        res.status(500).json({ error: 'Failed to fetch artworks', message: error.message });
+      }
     });
 
     // Get featured artworks (6 most recent for home page)
@@ -220,6 +238,30 @@ async function run() {
     });
 
     // ==================== FAVORITES APIs ====================
+    
+    // Get total artwork count (for statistics)
+    app.get('/stats/total-artworks', async (req, res) => {
+      try {
+        const total = await artworksCollection.countDocuments({ visibility: 'Public' });
+        res.send({ total });
+      } catch (error) {
+        res.status(500).json({ error: 'Failed to fetch statistics', message: error.message });
+      }
+    });
+
+    // Get artwork count by category (for statistics)
+    app.get('/stats/by-category', async (req, res) => {
+      try {
+        const categories = await artworksCollection.aggregate([
+          { $match: { visibility: 'Public' } },
+          { $group: { _id: '$category', count: { $sum: 1 } } },
+          { $sort: { count: -1 } }
+        ]).toArray();
+        res.send(categories);
+      } catch (error) {
+        res.status(500).json({ error: 'Failed to fetch category stats', message: error.message });
+      }
+    });
 
     // Add to favorites
     app.post('/favorites', async (req, res) => {
