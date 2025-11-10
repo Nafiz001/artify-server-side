@@ -163,10 +163,88 @@ async function initializeCollections(db) {
   const favoritesCollection = db.collection('favorites');
 
   try {
+    // Check if collections exist and create with sample data if empty
+    const artworksCount = await artworksCollection.countDocuments();
+    if (artworksCount === 0) {
+      console.log("🎨 Creating artworks collection with sample data...");
+      const sampleArtworks = [
+        {
+          title: "Sunset Over Mountains",
+          artistName: "John Doe",
+          artistEmail: "john@example.com",
+          category: "Painting",
+          image: "https://images.unsplash.com/photo-1578321272176-b7bbc0679853?w=600",
+          description: "A beautiful sunset painting over mountain ranges",
+          visibility: "Public",
+          likes: 15,
+          createdAt: new Date()
+        },
+        {
+          title: "Urban Street Photography",
+          artistName: "Jane Smith",
+          artistEmail: "jane@example.com",
+          category: "Photography",
+          image: "https://images.unsplash.com/photo-1502920917128-1aa500764cbd?w=600",
+          description: "Capturing the essence of urban life",
+          visibility: "Public",
+          likes: 23,
+          createdAt: new Date()
+        },
+        {
+          title: "Abstract Digital Art",
+          artistName: "Alex Johnson",
+          artistEmail: "alex@example.com",
+          category: "Digital Art",
+          image: "https://images.unsplash.com/photo-1551913902-c92207136625?w=600",
+          description: "Modern abstract digital composition",
+          visibility: "Public",
+          likes: 8,
+          createdAt: new Date()
+        },
+        {
+          title: "Ocean Waves",
+          artistName: "Maria Garcia",
+          artistEmail: "maria@example.com",
+          category: "Photography",
+          image: "https://images.unsplash.com/photo-1505142468610-359e7d316be0?w=600",
+          description: "Powerful ocean waves captured at the perfect moment",
+          visibility: "Public",
+          likes: 31,
+          createdAt: new Date()
+        },
+        {
+          title: "Forest Landscape",
+          artistName: "David Chen",
+          artistEmail: "david@example.com",
+          category: "Painting",
+          image: "https://images.unsplash.com/photo-1441974231531-c6227db76b6e?w=600",
+          description: "Peaceful forest landscape with morning light",
+          visibility: "Public",
+          likes: 19,
+          createdAt: new Date()
+        },
+        {
+          title: "Modern Architecture",
+          artistName: "Sarah Wilson",
+          artistEmail: "sarah@example.com",
+          category: "Photography",
+          image: "https://images.unsplash.com/photo-1486406146926-c627a92ad1ab?w=600",
+          description: "Clean lines and geometric patterns in modern buildings",
+          visibility: "Public",
+          likes: 42,
+          createdAt: new Date()
+        }
+      ];
+      
+      await artworksCollection.insertMany(sampleArtworks);
+      console.log("✅ Sample artworks inserted");
+    }
+    
     await artworksCollection.createIndex({ createdAt: -1 });
     await artworksCollection.createIndex({ artistEmail: 1 });
     await artworksCollection.createIndex({ visibility: 1 });
     
+    console.log("Collections initialized successfully");
     return { artworksCollection, usersCollection, favoritesCollection };
     
   } catch (error) {
@@ -235,10 +313,17 @@ function setupDatabaseRoutes(artworksCollection, usersCollection, favoritesColle
     });
 
     app.get('/latest-artworks', async (req, res) => {
-      const query = { visibility: 'Public' };
-      const cursor = artworksCollection.find(query).sort({ createdAt: -1 }).limit(6);
-      const result = await cursor.toArray();
-      res.send(result);
+      try {
+        console.log('Latest artworks endpoint called');
+        const query = { visibility: 'Public' };
+        const cursor = artworksCollection.find(query).sort({ createdAt: -1 }).limit(6);
+        const result = await cursor.toArray();
+        console.log(`Found ${result.length} artworks`);
+        res.send(result);
+      } catch (error) {
+        console.error('Latest artworks error:', error);
+        res.status(500).json({ error: 'Failed to fetch latest artworks', message: error.message });
+      }
     });
 
     app.get('/my-artworks/:email', async (req, res) => {
