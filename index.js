@@ -9,14 +9,28 @@ const app = express();
 const port = process.env.PORT || 3000;
 
 const corsOptions = {
-  origin: [
-    'http://localhost:3000',
-    'http://localhost:5173',
-    'https://artify-client-side.web.app',
-    'https://artify-client-side.firebaseapp.com'
-  ],
+  origin: function (origin, callback) {
+    const allowedOrigins = [
+      'http://localhost:3000',
+      'http://localhost:5173',
+      'https://artify-client-side.web.app',
+      'https://artify-client-side.firebaseapp.com'
+    ];
+    
+    // Allow requests with no origin (mobile apps, curl requests, etc.)
+    if (!origin) return callback(null, true);
+    
+    if (allowedOrigins.indexOf(origin) !== -1) {
+      callback(null, true);
+    } else {
+      console.log('Blocked origin:', origin);
+      callback(null, true); // Allow all origins temporarily for debugging
+    }
+  },
   credentials: true,
-  optionsSuccessStatus: 200
+  optionsSuccessStatus: 200,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin']
 };
 
 app.use(cors(corsOptions));
@@ -115,6 +129,14 @@ const client = new MongoClient(uri, {
 
 app.get('/', (req, res) => {
   res.send('Artisan\'s Echo Server is running');
+});
+
+app.get('/test', (req, res) => {
+  res.json({ 
+    message: 'Server is working!', 
+    timestamp: new Date().toISOString(),
+    origin: req.headers.origin 
+  });
 });
 
 async function run() {
