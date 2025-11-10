@@ -1,591 +1,485 @@
 const express = require('express');
-const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 const cors = require('cors');
 require('dotenv').config();
-
+const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 const app = express();
 const port = process.env.PORT || 5000;
 
-// Middleware
-app.use(cors());
+const admin = require("firebase-admin");
+
+// Initialize Firebase Admin SDK for production
+if (process.env.FB_SERVICE_KEY) {
+    try {
+        const decoded = Buffer.from(process.env.FB_SERVICE_KEY, "base64").toString("utf8");
+        const serviceAccount = JSON.parse(decoded);
+        
+        admin.initializeApp({
+            credential: admin.credential.cert(serviceAccount)
+        });
+        console.log('Firebase Admin initialized successfully');
+    } catch (error) {
+        console.log('Firebase Admin initialization failed:', error.message);
+    }
+}
+
+// middleware
+app.use(cors({
+    origin: [
+        "http://localhost:5173",
+        "http://localhost:3000",
+        "https://artify-client-side.web.app",
+        "https://artify-client-side.firebaseapp.com"
+    ],
+    credentials: true,
+}));
 app.use(express.json());
 
-// Debug middleware to log all requests
-app.use((req, res, next) => {
-  console.log(`${new Date().toISOString()} - ${req.method} ${req.path}`);
-  console.log('Request body:', req.body);
-  next();
-});
+const verifyFireBaseToken = async (req, res, next) => {
+    const authorization = req.headers.authorization;
+    if (!authorization) {
+        return res.status(401).send({ message: 'unauthorized access' })
+    }
+    const token = authorization.split(' ')[1];
+    
+    try {
+        const decoded = await admin.auth().verifyIdToken(token);
+        console.log('inside token', decoded);
+        req.token_email = decoded.email;
+        next();
+    }
+    catch (error) {
+        return res.status(401).send({ message: 'unauthorized access' })
+    }
+}
 
-// MongoDB connection
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.ttxaxx0.mongodb.net/?appName=Cluster0`;
 
-// Create a MongoClient with a MongoClientOptions object to set the Stable API version
 const client = new MongoClient(uri, {
-  serverApi: {
-    version: ServerApiVersion.v1,
-    strict: true,
-    deprecationErrors: true,
-  }
+    serverApi: {
+        version: ServerApiVersion.v1,
+        strict: true,
+        deprecationErrors: true,
+    }
 });
 
-async function run() {
-  try {
-    // Connect the client to the server
-    await client.connect();
-    
-    // Database and collections
-    const db = client.db('artifyDB');
-    const artworksCollection = db.collection('artworks');
-    const favoritesCollection = db.collection('favorites');
-    const usersCollection = db.collection('users');
+// Initialize database collections as variables
+let artworksCollection, favoritesCollection, usersCollection;
 
-    // Initialize collections by ensuring they exist
+app.get('/', (req, res) => {
+    res.json({ 
+        message: 'Artify server is running',
+        timestamp: new Date().toISOString(),
+        status: 'OK'
+    });
+})
+
+// Test endpoint to check if server is working
+app.get('/test', (req, res) => {
+    res.json({ message: 'Server is working', timestamp: new Date().toISOString() });
+})
+
+// Health check endpoint
+app.get('/health', (req, res) => {
+    res.json({ status: 'healthy', timestamp: new Date().toISOString() });
+})
+
+// USERS APIs
+app.post('/users', async (req, res) => {
     try {
-      await db.createCollection('artworks');
-      console.log('Artworks collection created/verified');
+        if (!usersCollection) {
+            return res.status(503).json({ message: 'Database not ready' });
+        }
+        
+        const newUser = req.body;
+        const email = req.body.email;
+        const query = { email: email }
+        const existingUser = await usersCollection.findOne(query);
+
+        if (existingUser) {
+            res.send({ message: 'user already exits. do not need to insert again' })
+        }
+        else {
+            const result = await usersCollection.insertOne(newUser);
+            res.send(result);
+        }
     } catch (error) {
-      console.log('Artworks collection already exists');
+        console.error('Error in users endpoint:', error);
+        res.status(500).json({ message: 'Error processing user request' });
     }
-    
+})
+
+// ARTWORKS APIs
+app.get('/artworks', async (req, res) => {
     try {
-      await db.createCollection('favorites');
-      console.log('Favorites collection created/verified');
-    } catch (error) {
-      console.log('Favorites collection already exists');
-    }
-    
-    try {
-      await db.createCollection('users');
-      console.log('Users collection created/verified');
-    } catch (error) {
-      console.log('Users collection already exists');
-    }
-
-    // Test route
-    app.get('/', (req, res) => {
-      res.send('Artify Server is running!');
-    });
-
-    // Debug route to check all collections
-    app.get('/debug/collections', async (req, res) => {
-      try {
-        const collections = await db.listCollections().toArray();
-        const artworksCount = await artworksCollection.countDocuments();
-        const favoritesCount = await favoritesCollection.countDocuments();
-        const usersCount = await usersCollection.countDocuments();
+        if (!artworksCollection) {
+            return res.json([]);  // Return empty array instead of error object
+        }
         
-        res.send({
-          collections: collections.map(c => c.name),
-          counts: {
-            artworks: artworksCount,
-            favorites: favoritesCount,
-            users: usersCount
-          }
-        });
-      } catch (error) {
-        res.status(500).send({ error: error.message });
-      }
-    });
-
-    // Debug route to check artwork IDs
-    app.get('/debug/artworks', async (req, res) => {
-      try {
-        const artworks = await artworksCollection.find({}).limit(5).toArray();
-        const artworkInfo = artworks.map(art => ({
-          id: art._id,
-          title: art.title,
-          idType: typeof art._id,
-          isValidObjectId: ObjectId.isValid(art._id)
-        }));
-        res.send(artworkInfo);
-      } catch (error) {
-        res.status(500).send({ error: error.message });
-      }
-    });
-
-    // Debug route to check all favorites
-    app.get('/debug/favorites', async (req, res) => {
-      try {
-        const favorites = await favoritesCollection.find({}).toArray();
-        res.send({
-          count: favorites.length,
-          favorites: favorites
-        });
-      } catch (error) {
-        res.status(500).send({ error: error.message });
-      }
-    });
-
-    // Debug route to check all users
-    app.get('/debug/users', async (req, res) => {
-      try {
-        const users = await usersCollection.find({}).toArray();
-        res.send({
-          count: users.length,
-          users: users.map(user => ({ email: user.email, name: user.name, createdAt: user.createdAt }))
-        });
-      } catch (error) {
-        res.status(500).send({ error: error.message });
-      }
-    });
-
-    // Test endpoint for favorites (simplified)
-    app.post('/test-favorites', async (req, res) => {
-      try {
-        console.log('Test favorites endpoint called with body:', req.body);
+        console.log(req.query);
+        const email = req.query.email;
+        const search = req.query.search;
+        const category = req.query.category;
+        let query = {};
         
-        const testFavorite = {
-          userEmail: 'test@example.com',
-          artworkId: '507f1f77bcf86cd799439011',
-          addedAt: new Date()
-        };
-        
-        const result = await favoritesCollection.insertOne(testFavorite);
-        res.send({ 
-          success: true, 
-          message: 'Test favorite added', 
-          insertedId: result.insertedId,
-          testData: testFavorite
-        });
-      } catch (error) {
-        console.error('Test favorites error:', error);
-        res.status(500).send({ error: error.message });
-      }
-    });
-
-    // Get all public artworks with pagination (for Explore page)
-    app.get('/artworks', async (req, res) => {
-      try {
-        const { page = 1, limit = 12 } = req.query;
-        const skip = (page - 1) * limit;
-        
-        const artworks = await artworksCollection
-          .find({ visibility: 'Public' })
-          .sort({ createdAt: -1 })
-          .skip(skip)
-          .limit(parseInt(limit))
-          .toArray();
-        
-        const total = await artworksCollection.countDocuments({ visibility: 'Public' });
-        
-        res.send({
-          artworks,
-          currentPage: parseInt(page),
-          totalPages: Math.ceil(total / limit),
-          totalArtworks: total
-        });
-      } catch (error) {
-        console.error('Error fetching artworks:', error);
-        res.status(500).send({ message: 'Error fetching artworks' });
-      }
-    });
-
-    // Get latest artworks for home page (featured artworks)
-    app.get('/latest-artworks', async (req, res) => {
-      try {
-        const artworks = await artworksCollection
-          .find({ visibility: 'Public' })
-          .sort({ createdAt: -1 })
-          .limit(6)
-          .toArray();
-        res.send(artworks);
-      } catch (error) {
-        console.error('Error fetching latest artworks:', error);
-        res.status(500).send({ message: 'Error fetching latest artworks' });
-      }
-    });
-
-    // Get all artworks for explore page (without pagination for compatibility)
-    app.get('/all-artworks', async (req, res) => {
-      try {
-        const { search, category } = req.query;
-        let query = { visibility: 'Public' };
+        if (email) {
+            query.artistEmail = email;
+        }
         
         // Search functionality
         if (search) {
-          query.$or = [
-            { title: { $regex: search, $options: 'i' } },
-            { artistName: { $regex: search, $options: 'i' } },
-            { category: { $regex: search, $options: 'i' } }
-          ];
+            query.$or = [
+                { title: { $regex: search, $options: 'i' } },
+                { artistName: { $regex: search, $options: 'i' } },
+                { category: { $regex: search, $options: 'i' } }
+            ];
         }
         
         // Category filter
         if (category && category !== 'all') {
-          query.category = category;
+            query.category = category;
+        }
+
+        const cursor = artworksCollection.find(query).sort({ createdAt: -1 });
+        const result = await cursor.toArray();
+        res.send(result)
+    } catch (error) {
+        console.error('Error in artworks endpoint:', error);
+        res.json([]);  // Return empty array instead of error object
+    }
+});
+
+// Get all artworks for explore page
+app.get('/all-artworks', async (req, res) => {
+    try {
+        if (!artworksCollection) {
+            return res.json([]);  // Return empty array instead of error object
         }
         
-        const artworks = await artworksCollection
-          .find(query)
-          .sort({ createdAt: -1 })
-          .toArray();
+        const search = req.query.search;
+        const category = req.query.category;
+        let query = {};
         
-        res.send(artworks);
-      } catch (error) {
-        console.error('Error fetching all artworks:', error);
-        res.status(500).send({ message: 'Error fetching all artworks' });
-      }
-    });
+        // Search functionality
+        if (search) {
+            query.$or = [
+                { title: { $regex: search, $options: 'i' } },
+                { artistName: { $regex: search, $options: 'i' } },
+                { category: { $regex: search, $options: 'i' } }
+            ];
+        }
+        
+        // Category filter
+        if (category && category !== 'all') {
+            query.category = category;
+        }
 
-    // Get artwork by ID
-    app.get('/artwork/:id', async (req, res) => {
-      try {
+        const cursor = artworksCollection.find(query).sort({ createdAt: -1 });
+        const result = await cursor.toArray();
+        res.send(result);
+    } catch (error) {
+        console.error('Error in all-artworks endpoint:', error);
+        res.json([]);  // Return empty array instead of error object
+    }
+});
+
+app.get('/latest-artworks', async (req, res) => {
+    try {
+        console.log('Latest artworks endpoint called');
+        console.log('artworksCollection status:', !!artworksCollection);
+        
+        if (!artworksCollection) {
+            console.log('Database not ready, returning empty array');
+            return res.json([]);  // Return empty array instead of error object
+        }
+        
+        const cursor = artworksCollection.find().sort({ createdAt: -1 }).limit(6);
+        const result = await cursor.toArray();
+        console.log('Latest artworks result:', result.length, 'items');
+        res.send(result);
+    } catch (error) {
+        console.error('Error in latest-artworks endpoint:', error);
+        res.status(500).json([]);  // Return empty array instead of error object
+    }
+})
+
+app.get('/artwork/:id', async (req, res) => {
+    try {
+        if (!artworksCollection) {
+            return res.status(503).json({ message: 'Database not ready' });
+        }
+        
         const id = req.params.id;
-        const artwork = await artworksCollection.findOne({ _id: new ObjectId(id) });
-        if (!artwork) {
-          return res.status(404).send({ message: 'Artwork not found' });
-        }
-        res.send(artwork);
-      } catch (error) {
-        console.error('Error fetching artwork:', error);
-        res.status(500).send({ message: 'Error fetching artwork' });
-      }
-    });
+        const query = { _id: new ObjectId(id) }
+        const result = await artworksCollection.findOne(query);
+        res.send(result);
+    } catch (error) {
+        console.error('Error in artwork detail endpoint:', error);
+        res.status(500).json({ message: 'Error fetching artwork' });
+    }
+})
 
-    // Get artworks by user email (My Gallery)
-    app.get('/my-artworks/:email', async (req, res) => {
-      try {
+app.get('/my-artworks/:email', async (req, res) => {
+    try {
+        if (!artworksCollection) {
+            return res.status(503).json({ message: 'Database not ready' });
+        }
+        
         const email = req.params.email;
-        const artworks = await artworksCollection.find({ artistEmail: email }).sort({ createdAt: -1 }).toArray();
-        res.send(artworks);
-      } catch (error) {
-        console.error('Error fetching user artworks:', error);
-        res.status(500).send({ message: 'Error fetching user artworks' });
-      }
-    });
+        const query = { artistEmail: email }
+        const cursor = artworksCollection.find(query).sort({ createdAt: -1 });
+        const result = await cursor.toArray();
+        res.send(result);
+    } catch (error) {
+        console.error('Error in my-artworks endpoint:', error);
+        res.status(500).json({ message: 'Error fetching user artworks' });
+    }
+})
 
-    // Add new artwork
-    app.post('/artworks', async (req, res) => {
-      try {
-        const artwork = {
-          ...req.body,
-          createdAt: new Date(),
-          likes: 0,
-          likedBy: []
-        };
-        const result = await artworksCollection.insertOne(artwork);
-        res.send({ success: true, insertedId: result.insertedId, message: 'Artwork added successfully' });
-      } catch (error) {
-        console.error('Error adding artwork:', error);
-        res.status(500).send({ message: 'Error adding artwork' });
-      }
-    });
-
-    // Update artwork
-    app.patch('/artwork/:id', async (req, res) => {
-      try {
-        const id = req.params.id;
-        const updatedArtwork = {
-          $set: {
+app.post('/artworks', async (req, res) => {
+    try {
+        console.log('POST /artworks request received');
+        console.log('headers in the post ', req.headers);
+        console.log('body:', req.body);
+        
+        if (!artworksCollection) {
+            return res.status(503).json({ message: 'Database not ready' });
+        }
+        
+        const newArtwork = {
             ...req.body,
-            updatedAt: new Date()
-          }
+            createdAt: new Date(),
+            likes: 0,
+            likedBy: []
         };
-        const result = await artworksCollection.updateOne(
-          { _id: new ObjectId(id) },
-          updatedArtwork
-        );
         
-        if (result.matchedCount === 0) {
-          return res.status(404).send({ message: 'Artwork not found' });
+        const result = await artworksCollection.insertOne(newArtwork);
+        console.log('Artwork inserted successfully:', result.insertedId);
+        res.json({ success: true, insertedId: result.insertedId });
+    } catch (error) {
+        console.error('Error adding artwork:', error);
+        res.status(500).json({ success: false, message: 'Error adding artwork', error: error.message });
+    }
+})
+
+app.patch('/artwork/:id', verifyFireBaseToken, async (req, res) => {
+    try {
+        if (!artworksCollection) {
+            return res.status(503).json({ message: 'Database not ready' });
         }
         
-        res.send({ success: true, message: 'Artwork updated successfully' });
-      } catch (error) {
-        console.error('Error updating artwork:', error);
-        res.status(500).send({ message: 'Error updating artwork' });
-      }
-    });
-
-    // Delete artwork
-    app.delete('/artwork/:id', async (req, res) => {
-      try {
         const id = req.params.id;
-        const result = await artworksCollection.deleteOne({ _id: new ObjectId(id) });
+        const updatedArtwork = req.body;
+        const query = { _id: new ObjectId(id) }
         
-        if (result.deletedCount === 0) {
-          return res.status(404).send({ message: 'Artwork not found' });
+        // Check if user owns the artwork
+        const artwork = await artworksCollection.findOne(query);
+        if (artwork.artistEmail !== req.token_email) {
+            return res.status(403).send({ message: 'forbidden access' });
         }
         
-        res.send({ success: true, message: 'Artwork deleted successfully' });
-      } catch (error) {
-        console.error('Error deleting artwork:', error);
-        res.status(500).send({ message: 'Error deleting artwork' });
-      }
-    });
+        const update = {
+            $set: {
+                ...updatedArtwork,
+                updatedAt: new Date()
+            }
+        }
 
-    // Like artwork
-    app.patch('/artwork/:id/like', async (req, res) => {
-      try {
+        const result = await artworksCollection.updateOne(query, update)
+        res.send(result)
+    } catch (error) {
+        console.error('Error updating artwork:', error);
+        res.status(500).json({ message: 'Error updating artwork' });
+    }
+})
+
+app.delete('/artwork/:id', verifyFireBaseToken, async (req, res) => {
+    try {
+        if (!artworksCollection) {
+            return res.status(503).json({ message: 'Database not ready' });
+        }
+        
+        const id = req.params.id;
+        const query = { _id: new ObjectId(id) }
+        
+        // Check if user owns the artwork
+        const artwork = await artworksCollection.findOne(query);
+        if (artwork.artistEmail !== req.token_email) {
+            return res.status(403).send({ message: 'forbidden access' });
+        }
+        
+        const result = await artworksCollection.deleteOne(query);
+        res.send(result);
+    } catch (error) {
+        console.error('Error deleting artwork:', error);
+        res.status(500).json({ message: 'Error deleting artwork' });
+    }
+})
+
+// Like/Unlike artwork
+app.patch('/artwork/:id/like', async (req, res) => {
+    try {
+        if (!artworksCollection) {
+            return res.status(503).json({ message: 'Database not ready' });
+        }
+        
         const artworkId = req.params.id;
+        const { userEmail, action } = req.body;
+        
+        let updateOperation;
+        if (action === 'like') {
+            updateOperation = {
+                $inc: { likes: 1 },
+                $addToSet: { likedBy: userEmail }
+            };
+        } else if (action === 'unlike') {
+            updateOperation = {
+                $inc: { likes: -1 },
+                $pull: { likedBy: userEmail }
+            };
+        }
         
         const result = await artworksCollection.updateOne(
-          { _id: new ObjectId(artworkId) },
-          { $inc: { likes: 1 } }
+            { _id: new ObjectId(artworkId) },
+            updateOperation
         );
         
-        if (result.matchedCount === 0) {
-          return res.status(404).send({ message: 'Artwork not found' });
+        res.send(result);
+    } catch (error) {
+        console.error('Error updating likes:', error);
+        res.status(500).json({ message: 'Error updating likes' });
+    }
+})
+
+// FAVORITES APIs
+app.get('/favorites/:email', async (req, res) => {
+    try {
+        if (!favoritesCollection || !artworksCollection) {
+            return res.json([]);  // Return empty array instead of error object
         }
         
-        res.send({ success: true, message: 'Artwork liked successfully' });
-      } catch (error) {
-        console.error('Error liking artwork:', error);
-        res.status(500).send({ message: 'Error liking artwork' });
-      }
-    });
-
-    // Search artworks by title or artist
-    app.get('/artworks/search/:searchTerm', async (req, res) => {
-      try {
-        const searchTerm = req.params.searchTerm;
-        const query = {
-          visibility: 'Public',
-          $or: [
-            { title: { $regex: searchTerm, $options: 'i' } },
-            { userName: { $regex: searchTerm, $options: 'i' } }
-          ]
-        };
-        
-        const artworks = await artworksCollection.find(query).toArray();
-        res.send(artworks);
-      } catch (error) {
-        console.error('Error searching artworks:', error);
-        res.status(500).send({ message: 'Error searching artworks' });
-      }
-    });
-
-    // Filter artworks by category
-    app.get('/artworks/category/:category', async (req, res) => {
-      try {
-        const category = req.params.category;
-        const artworks = await artworksCollection
-          .find({ 
-            visibility: 'Public',
-            category: category
-          })
-          .sort({ createdAt: -1 })
-          .toArray();
-        res.send(artworks);
-      } catch (error) {
-        console.error('Error filtering artworks by category:', error);
-        res.status(500).send({ message: 'Error filtering artworks by category' });
-      }
-    });
-
-    // Get user favorites
-    app.get('/favorites/:email', async (req, res) => {
-      try {
         const email = req.params.email;
-        console.log('Fetching favorites for email:', email);
-        
         const favorites = await favoritesCollection.find({ userEmail: email }).toArray();
-        console.log('Found favorites:', favorites.length);
         
         if (favorites.length === 0) {
-          return res.send([]);
+            return res.send([]);
         }
         
-        // Validate and convert artwork IDs to ObjectId
         const validArtworkIds = [];
         for (const fav of favorites) {
-          try {
             if (ObjectId.isValid(fav.artworkId)) {
-              validArtworkIds.push(new ObjectId(fav.artworkId));
-            } else {
-              console.log('Invalid artwork ID:', fav.artworkId);
+                validArtworkIds.push(new ObjectId(fav.artworkId));
             }
-          } catch (error) {
-            console.log('Error converting artwork ID:', fav.artworkId, error);
-          }
         }
         
         if (validArtworkIds.length === 0) {
-          return res.send([]);
+            return res.send([]);
         }
         
         const artworks = await artworksCollection.find({
-          _id: { $in: validArtworkIds }
+            _id: { $in: validArtworkIds }
         }).toArray();
         
-        console.log('Found artworks:', artworks.length);
         res.send(artworks);
-      } catch (error) {
+    } catch (error) {
         console.error('Error fetching favorites:', error);
-        res.status(500).send({ message: 'Error fetching favorites' });
-      }
-    });
+        res.json([]);  // Return empty array instead of error object
+    }
+})
 
-    // Add to favorites
-    app.post('/favorites', async (req, res) => {
-      try {
+app.post('/favorites', async (req, res) => {
+    try {
+        if (!favoritesCollection) {
+            return res.status(503).json({ message: 'Database not ready' });
+        }
+        
         const { userEmail, artworkId } = req.body;
-        
-        console.log('Adding to favorites:', { userEmail, artworkId });
-        
-        // Validate inputs
-        if (!userEmail || !artworkId) {
-          return res.status(400).send({ message: 'User email and artwork ID are required' });
-        }
-        
-        // Validate artwork ID format
-        if (!ObjectId.isValid(artworkId)) {
-          return res.status(400).send({ message: 'Invalid artwork ID format' });
-        }
-        
-        // Check if artwork exists
-        const artwork = await artworksCollection.findOne({ _id: new ObjectId(artworkId) });
-        if (!artwork) {
-          return res.status(404).send({ message: 'Artwork not found' });
-        }
         
         // Check if already in favorites
         const existing = await favoritesCollection.findOne({ userEmail, artworkId });
         if (existing) {
-          return res.status(400).send({ message: 'Already in favorites' });
+            return res.status(400).send({ message: 'Already in favorites' });
         }
         
         const favorite = {
-          userEmail,
-          artworkId,
-          addedAt: new Date()
+            userEmail,
+            artworkId,
+            addedAt: new Date()
         };
         
         const result = await favoritesCollection.insertOne(favorite);
-        console.log('Favorite added successfully:', result.insertedId);
-        res.send({ success: true, message: 'Added to favorites successfully', insertedId: result.insertedId });
-      } catch (error) {
+        res.send(result);
+    } catch (error) {
         console.error('Error adding to favorites:', error);
-        res.status(500).send({ message: 'Error adding to favorites' });
-      }
-    });
+        res.status(500).json({ message: 'Error adding to favorites' });
+    }
+})
 
-    // Remove from favorites
-    app.delete('/favorites', async (req, res) => {
-      try {
+app.delete('/favorites', async (req, res) => {
+    try {
+        if (!favoritesCollection) {
+            return res.status(503).json({ message: 'Database not ready' });
+        }
+        
         const { userEmail, artworkId } = req.body;
         const result = await favoritesCollection.deleteOne({ userEmail, artworkId });
-        
-        if (result.deletedCount === 0) {
-          return res.status(404).send({ message: 'Favorite not found' });
-        }
-        
-        res.send({ success: true, message: 'Removed from favorites successfully' });
-      } catch (error) {
+        res.send(result);
+    } catch (error) {
         console.error('Error removing from favorites:', error);
-        res.status(500).send({ message: 'Error removing from favorites' });
-      }
-    });
+        res.status(500).json({ message: 'Error removing from favorites' });
+    }
+})
 
-    // Create or get user
-    app.post('/users', async (req, res) => {
-      try {
-        const userData = req.body;
-        console.log('User registration/login attempt:', userData);
-        
-        // Check if user already exists
-        const existingUser = await usersCollection.findOne({ email: userData.email });
-        if (existingUser) {
-          console.log('Existing user found:', existingUser.email);
-          return res.send({ success: true, user: existingUser, message: 'User already exists' });
+// Get categories
+app.get('/categories', async (req, res) => {
+    try {
+        if (!artworksCollection) {
+            return res.status(503).json({ message: 'Database not ready' });
         }
         
-        // Create new user
-        const newUser = {
-          ...userData,
-          createdAt: new Date()
-        };
-        
-        const result = await usersCollection.insertOne(newUser);
-        console.log('New user created:', result.insertedId);
-        res.send({ success: true, user: newUser, message: 'User created successfully' });
-      } catch (error) {
-        console.error('Error creating/getting user:', error);
-        res.status(500).send({ message: 'Error creating/getting user' });
-      }
-    });
-
-    // Get total artworks statistics
-    app.get('/stats/total-artworks', async (req, res) => {
-      try {
-        const totalArtworks = await artworksCollection.countDocuments({ visibility: 'Public' });
-        const totalUsers = await usersCollection.countDocuments();
-        const totalLikes = await artworksCollection.aggregate([
-          { $group: { _id: null, totalLikes: { $sum: '$likes' } } }
-        ]).toArray();
-        
-        res.send({
-          totalArtworks,
-          totalUsers,
-          totalLikes: totalLikes[0]?.totalLikes || 0
-        });
-      } catch (error) {
-        console.error('Error fetching statistics:', error);
-        res.status(500).send({ message: 'Error fetching statistics' });
-      }
-    });
-
-    // Get category statistics
-    app.get('/stats/by-category', async (req, res) => {
-      try {
-        const categoryStats = await artworksCollection.aggregate([
-          { $match: { visibility: 'Public' } },
-          { $group: { _id: '$category', count: { $sum: 1 } } },
-          { $sort: { count: -1 } }
-        ]).toArray();
-        
-        res.send(categoryStats);
-      } catch (error) {
-        console.error('Error fetching category statistics:', error);
-        res.status(500).send({ message: 'Error fetching category statistics' });
-      }
-    });
-
-    // Get categories (for filter dropdown)
-    app.get('/categories', async (req, res) => {
-      try {
-        const categories = await artworksCollection.distinct('category', { visibility: 'Public' });
+        const categories = await artworksCollection.distinct('category');
         res.send(categories);
-      } catch (error) {
+    } catch (error) {
         console.error('Error fetching categories:', error);
-        res.status(500).send({ message: 'Error fetching categories' });
-      }
-    });
+        res.status(500).json({ message: 'Error fetching categories' });
+    }
+})
 
-    // Health check
-    app.get('/health', (req, res) => {
-      res.send({ status: 'OK', timestamp: new Date().toISOString() });
-    });
+async function run() {
+    try {
+        console.log('Attempting to connect to MongoDB...');
+        await client.connect();
+        console.log('Connected to MongoDB successfully');
 
-    // 404 handler for API routes
-    app.use('/api/*', (req, res) => {
-      res.status(404).json({ error: 'API endpoint not found', path: req.path });
-    });
+        const db = client.db('artifyDB');
+        artworksCollection = db.collection('artworks');
+        favoritesCollection = db.collection('favorites');
+        usersCollection = db.collection('users');
 
-    // Global error handler
-    app.use((err, req, res, next) => {
-      console.error('Global error handler:', err);
-      res.status(500).json({ error: 'Internal server error', message: err.message });
-    });
+        console.log("Successfully connected to MongoDB!");
+        console.log("Collections initialized and routes are ready!");
 
-    // Catch all 404 handler
-    app.use('*', (req, res) => {
-      console.log(`404 - Route not found: ${req.method} ${req.originalUrl}`);
-      res.status(404).json({ error: 'Route not found', path: req.originalUrl, method: req.method });
-    });
+        // Test the connection by counting documents
+        try {
+            const artworkCount = await artworksCollection.countDocuments();
+            console.log(`Found ${artworkCount} artworks in database`);
+        } catch (countError) {
+            console.log('Error counting artworks:', countError.message);
+        }
 
-    // Send a ping to confirm a successful connection
-    // await client.db("admin").command({ ping: 1 });
-    // console.log("Successfully connected to MongoDB!");
-
-  } catch (error) {
-    console.error('Error connecting to MongoDB:', error);
-  }
+    } catch (error) {
+        console.error('Database connection error:', error);
+        console.log('Server will continue to run, but will return empty arrays until DB is ready');
+        // Retry connection after 5 seconds
+        setTimeout(() => {
+            console.log('Retrying database connection...');
+            run();
+        }, 5000);
+    }
 }
 
+// Start database connection immediately
 run().catch(console.dir);
 
 app.listen(port, () => {
-  console.log(`Artify server is running on port ${port}`);
-});
+    console.log(`Artify server is running on port: ${port}`)
+})

@@ -1,22 +1,21 @@
 {
   "name": "artify-server-side",
   "version": "1.0.0",
-  "description": "Server side for Artify - A Creative Artwork Showcase Platform",
+  "description": "Backend server for Artify art marketplace",
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
-    "dev": "nodemon index.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "dev": "nodemon index.js"
   },
-  "keywords": ["art", "gallery", "artwork", "showcase", "mongodb", "express"],
-  "author": "Nafiz",
-  "license": "MIT",
+  "keywords": ["art", "marketplace", "api"],
+  "author": "",
+  "license": "ISC",
   "dependencies": {
-    "express": "^4.18.2",
-    "mongodb": "^6.3.0",
     "cors": "^2.8.5",
     "dotenv": "^16.3.1",
-    "body-parser": "^1.20.2"
+    "express": "^4.18.2",
+    "firebase-admin": "^12.0.0",
+    "mongodb": "^6.3.0"
   },
   "devDependencies": {
     "nodemon": "^3.0.2"

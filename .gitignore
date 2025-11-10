@@ -10,3 +10,10 @@ yarn-error.log*
 .DS_Store
 .vscode/
 *.log
+node_modules/
+.env
+firebase-service-account.json
+encode.js
+.DS_Store
+*.log
+.vercel
