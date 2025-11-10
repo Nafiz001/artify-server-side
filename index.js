@@ -202,6 +202,43 @@ app.get('/latest-artworks', async (req, res) => {
     }
 })
 
+// Get top artists by total artworks and likes
+app.get('/top-artists', async (req, res) => {
+    try {
+        console.log('Top artists endpoint called');
+        
+        if (!artworksCollection || !usersCollection) {
+            console.log('Database not ready, returning empty array');
+            return res.json([]);
+        }
+        
+        // Aggregate artworks by artist email to get counts and total likes
+        const topArtists = await artworksCollection.aggregate([
+            {
+                $group: {
+                    _id: '$artistEmail',
+                    artistName: { $first: '$artistName' },
+                    artistPhoto: { $first: '$artistPhoto' },
+                    totalArtworks: { $sum: 1 },
+                    totalLikes: { $sum: '$likes' }
+                }
+            },
+            {
+                $sort: { totalLikes: -1, totalArtworks: -1 }
+            },
+            {
+                $limit: 4
+            }
+        ]).toArray();
+        
+        console.log('Top artists result:', topArtists.length, 'artists');
+        res.send(topArtists);
+    } catch (error) {
+        console.error('Error in top-artists endpoint:', error);
+        res.status(500).json([]);
+    }
+})
+
 app.get('/artwork/:id', async (req, res) => {
     try {
         if (!artworksCollection) {
