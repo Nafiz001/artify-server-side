@@ -8,7 +8,18 @@ process.env["NODE_TLS_REJECT_UNAUTHORIZED"] = 0;
 const app = express();
 const port = process.env.PORT || 3000;
 
-app.use(cors());
+const corsOptions = {
+  origin: [
+    'http://localhost:3000',
+    'http://localhost:5173',
+    'https://artify-client-side.web.app',
+    'https://artify-client-side.firebaseapp.com'
+  ],
+  credentials: true,
+  optionsSuccessStatus: 200
+};
+
+app.use(cors(corsOptions));
 app.use(express.json());
 
 app.use((req, res, next) => {
