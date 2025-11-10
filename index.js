@@ -92,7 +92,7 @@ const errorHandler = (err, req, res, next) => {
   });
 };
 
-const uri = `mongodb+srv://artify_db_user:HZGIuzI3a6rVJ12q@cluster0.rcvljwd.mongodb.net/?appName=Cluster0`;
+const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.rcvljwd.mongodb.net/?appName=Cluster0`;
 
 const client = new MongoClient(uri, {
   serverApi: {
