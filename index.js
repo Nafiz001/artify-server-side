@@ -3,6 +3,8 @@ const cors = require('cors');
 require('dotenv').config();
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 
+process.env["NODE_TLS_REJECT_UNAUTHORIZED"] = 0;
+
 const app = express();
 const port = process.env.PORT || 3000;
 
@@ -90,7 +92,7 @@ const errorHandler = (err, req, res, next) => {
   });
 };
 
-const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.sqaw1iw.mongodb.net/?appName=Cluster0`;
+const uri = `mongodb+srv://artify_db_user:HZGIuzI3a6rVJ12q@cluster0.rcvljwd.mongodb.net/?appName=Cluster0`;
 
 const client = new MongoClient(uri, {
   serverApi: {
@@ -107,12 +109,40 @@ app.get('/', (req, res) => {
 async function run() {
   try {
     await client.connect();
-    console.log("Connected to MongoDB!");
+    await client.db("admin").command({ ping: 1 });
+    console.log("Successfully connected to MongoDB!");
 
     const db = client.db('artisans_echo_db');
-    const artworksCollection = db.collection('artworks');
-    const usersCollection = db.collection('users');
-    const favoritesCollection = db.collection('favorites');
+    const { artworksCollection, usersCollection, favoritesCollection } = await initializeCollections(db);
+    setupDatabaseRoutes(artworksCollection, usersCollection, favoritesCollection);
+
+  } catch (error) {
+    console.log("MongoDB connection failed:", error.message);
+    process.exit(1);
+  }
+}
+
+
+
+async function initializeCollections(db) {
+  const artworksCollection = db.collection('artworks');
+  const usersCollection = db.collection('users');
+  const favoritesCollection = db.collection('favorites');
+
+  try {
+    await artworksCollection.createIndex({ createdAt: -1 });
+    await artworksCollection.createIndex({ artistEmail: 1 });
+    await artworksCollection.createIndex({ visibility: 1 });
+    
+    return { artworksCollection, usersCollection, favoritesCollection };
+    
+  } catch (error) {
+    console.error("Error initializing collections:", error);
+    throw error;
+  }
+}
+
+function setupDatabaseRoutes(artworksCollection, usersCollection, favoritesCollection) {
     
     app.post('/users', async (req, res) => {
       const newUser = req.body;
@@ -148,6 +178,17 @@ async function run() {
             limit
           }
         });
+      } catch (error) {
+        res.status(500).json({ error: 'Failed to fetch artworks', message: error.message });
+      }
+    });
+
+    app.get('/all-artworks', async (req, res) => {
+      try {
+        const query = { visibility: 'Public' };
+        const cursor = artworksCollection.find(query).sort({ createdAt: -1 });
+        const result = await cursor.toArray();
+        res.send(result);
       } catch (error) {
         res.status(500).json({ error: 'Failed to fetch artworks', message: error.message });
       }
@@ -297,12 +338,21 @@ async function run() {
       const result = await favoritesCollection.deleteOne(query);
       res.send(result);
     });
+}
 
+async function run() {
+  try {
+    await client.connect();
     await client.db("admin").command({ ping: 1 });
-    console.log("Pinged your deployment. Successfully connected to MongoDB!");
+    console.log("Successfully connected to MongoDB!");
+
+    const db = client.db('artisans_echo_db');
+    const { artworksCollection, usersCollection, favoritesCollection } = await initializeCollections(db);
+    setupDatabaseRoutes(artworksCollection, usersCollection, favoritesCollection);
 
   } catch (error) {
-    console.error(error);
+    console.log("MongoDB connection failed:", error.message);
+    process.exit(1);
   }
 }
 
