@@ -1,115 +1,26 @@
 const express = require('express');
+const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 const cors = require('cors');
 require('dotenv').config();
-const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
-
-process.env["NODE_TLS_REJECT_UNAUTHORIZED"] = 0;
 
 const app = express();
-const port = process.env.PORT || 3000;
+const port = process.env.PORT || 5000;
 
-const corsOptions = {
-  origin: true, // Allow all origins for now
-  credentials: true,
-  optionsSuccessStatus: 200,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin']
-};
-
-app.use(cors(corsOptions));
+// Middleware
+app.use(cors());
 app.use(express.json());
 
-// Handle preflight OPTIONS requests
-app.options('*', (req, res) => {
-  res.header('Access-Control-Allow-Origin', '*');
-  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin');
-  res.sendStatus(200);
-});
-
+// Debug middleware to log all requests
 app.use((req, res, next) => {
-  res.setHeader('X-Content-Type-Options', 'nosniff');
-  res.setHeader('X-Frame-Options', 'DENY');
-  res.setHeader('X-XSS-Protection', '1; mode=block');
-  res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+  console.log(`${new Date().toISOString()} - ${req.method} ${req.path}`);
+  console.log('Request body:', req.body);
   next();
 });
 
-app.use((req, res, next) => {
-  const timestamp = new Date().toISOString();
-  console.log(`[${timestamp}] ${req.method} ${req.path}`);
-  next();
-});
+// MongoDB connection
+const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.ttxaxx0.mongodb.net/?appName=Cluster0`;
 
-const rateLimitMap = new Map();
-const RATE_LIMIT_WINDOW = 60000;
-const MAX_REQUESTS = 100;
-
-app.use((req, res, next) => {
-  const ip = req.ip || req.connection.remoteAddress;
-  const now = Date.now();
-  
-  if (!rateLimitMap.has(ip)) {
-    rateLimitMap.set(ip, { count: 1, resetTime: now + RATE_LIMIT_WINDOW });
-    return next();
-  }
-  
-  const userData = rateLimitMap.get(ip);
-  
-  if (now > userData.resetTime) {
-    rateLimitMap.set(ip, { count: 1, resetTime: now + RATE_LIMIT_WINDOW });
-    return next();
-  }
-  
-  if (userData.count >= MAX_REQUESTS) {
-    return res.status(429).json({ 
-      error: 'Too many requests', 
-      message: 'Please try again later' 
-    });
-  }
-  
-  userData.count++;
-  next();
-});
-
-const validateArtwork = (req, res, next) => {
-  const { title, image, category, artistName, artistEmail } = req.body;
-  
-  if (!title || !image || !category || !artistName || !artistEmail) {
-    return res.status(400).json({ 
-      error: 'Missing required fields',
-      required: ['title', 'image', 'category', 'artistName', 'artistEmail']
-    });
-  }
-  
-  const urlPattern = /^https?:\/\/.+\.(jpg|jpeg|png|gif|webp)$/i;
-  if (!urlPattern.test(image)) {
-    return res.status(400).json({ 
-      error: 'Invalid image URL format',
-      message: 'Image must be a valid URL ending with jpg, jpeg, png, gif, or webp'
-    });
-  }
-  
-  const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-  if (!emailPattern.test(artistEmail)) {
-    return res.status(400).json({ 
-      error: 'Invalid email format'
-    });
-  }
-  
-  next();
-};
-
-const errorHandler = (err, req, res, next) => {
-  console.error(err.stack);
-  res.status(500).json({ 
-    error: 'Something went wrong!',
-    message: err.message 
-  });
-};
-
-const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.rcvljwd.mongodb.net/?appName=Cluster0`;
-
+// Create a MongoClient with a MongoClientOptions object to set the Stable API version
 const client = new MongoClient(uri, {
   serverApi: {
     version: ServerApiVersion.v1,
@@ -118,357 +29,563 @@ const client = new MongoClient(uri, {
   }
 });
 
-app.get('/', (req, res) => {
-  res.send('Artisan\'s Echo Server is running');
-});
-
-app.get('/test', (req, res) => {
-  res.json({ 
-    message: 'Server is working!', 
-    timestamp: new Date().toISOString(),
-    origin: req.headers.origin 
-  });
-});
-
 async function run() {
   try {
+    // Connect the client to the server
     await client.connect();
-    await client.db("admin").command({ ping: 1 });
-    console.log("Successfully connected to MongoDB!");
+    
+    // Database and collections
+    const db = client.db('artifyDB');
+    const artworksCollection = db.collection('artworks');
+    const favoritesCollection = db.collection('favorites');
+    const usersCollection = db.collection('users');
 
-    const db = client.db('artisans_echo_db');
-    const { artworksCollection, usersCollection, favoritesCollection } = await initializeCollections(db);
-    setupDatabaseRoutes(artworksCollection, usersCollection, favoritesCollection);
-
-  } catch (error) {
-    console.log("MongoDB connection failed:", error.message);
-    process.exit(1);
-  }
-}
-
-
-
-async function initializeCollections(db) {
-  const artworksCollection = db.collection('artworks');
-  const usersCollection = db.collection('users');
-  const favoritesCollection = db.collection('favorites');
-
-  try {
-    // Check if collections exist and create with sample data if empty
-    const artworksCount = await artworksCollection.countDocuments();
-    if (artworksCount === 0) {
-      console.log("🎨 Creating artworks collection with sample data...");
-      const sampleArtworks = [
-        {
-          title: "Sunset Over Mountains",
-          artistName: "John Doe",
-          artistEmail: "john@example.com",
-          category: "Painting",
-          image: "https://images.unsplash.com/photo-1578321272176-b7bbc0679853?w=600",
-          description: "A beautiful sunset painting over mountain ranges",
-          visibility: "Public",
-          likes: 15,
-          createdAt: new Date()
-        },
-        {
-          title: "Urban Street Photography",
-          artistName: "Jane Smith",
-          artistEmail: "jane@example.com",
-          category: "Photography",
-          image: "https://images.unsplash.com/photo-1502920917128-1aa500764cbd?w=600",
-          description: "Capturing the essence of urban life",
-          visibility: "Public",
-          likes: 23,
-          createdAt: new Date()
-        },
-        {
-          title: "Abstract Digital Art",
-          artistName: "Alex Johnson",
-          artistEmail: "alex@example.com",
-          category: "Digital Art",
-          image: "https://images.unsplash.com/photo-1551913902-c92207136625?w=600",
-          description: "Modern abstract digital composition",
-          visibility: "Public",
-          likes: 8,
-          createdAt: new Date()
-        },
-        {
-          title: "Ocean Waves",
-          artistName: "Maria Garcia",
-          artistEmail: "maria@example.com",
-          category: "Photography",
-          image: "https://images.unsplash.com/photo-1505142468610-359e7d316be0?w=600",
-          description: "Powerful ocean waves captured at the perfect moment",
-          visibility: "Public",
-          likes: 31,
-          createdAt: new Date()
-        },
-        {
-          title: "Forest Landscape",
-          artistName: "David Chen",
-          artistEmail: "david@example.com",
-          category: "Painting",
-          image: "https://images.unsplash.com/photo-1441974231531-c6227db76b6e?w=600",
-          description: "Peaceful forest landscape with morning light",
-          visibility: "Public",
-          likes: 19,
-          createdAt: new Date()
-        },
-        {
-          title: "Modern Architecture",
-          artistName: "Sarah Wilson",
-          artistEmail: "sarah@example.com",
-          category: "Photography",
-          image: "https://images.unsplash.com/photo-1486406146926-c627a92ad1ab?w=600",
-          description: "Clean lines and geometric patterns in modern buildings",
-          visibility: "Public",
-          likes: 42,
-          createdAt: new Date()
-        }
-      ];
-      
-      await artworksCollection.insertMany(sampleArtworks);
-      console.log("✅ Sample artworks inserted");
+    // Initialize collections by ensuring they exist
+    try {
+      await db.createCollection('artworks');
+      console.log('Artworks collection created/verified');
+    } catch (error) {
+      console.log('Artworks collection already exists');
     }
     
-    await artworksCollection.createIndex({ createdAt: -1 });
-    await artworksCollection.createIndex({ artistEmail: 1 });
-    await artworksCollection.createIndex({ visibility: 1 });
+    try {
+      await db.createCollection('favorites');
+      console.log('Favorites collection created/verified');
+    } catch (error) {
+      console.log('Favorites collection already exists');
+    }
     
-    console.log("Collections initialized successfully");
-    return { artworksCollection, usersCollection, favoritesCollection };
-    
-  } catch (error) {
-    console.error("Error initializing collections:", error);
-    throw error;
-  }
-}
+    try {
+      await db.createCollection('users');
+      console.log('Users collection created/verified');
+    } catch (error) {
+      console.log('Users collection already exists');
+    }
 
-function setupDatabaseRoutes(artworksCollection, usersCollection, favoritesCollection) {
-    
-    app.post('/users', async (req, res) => {
-      const newUser = req.body;
-      const email = req.body.email;
-      const query = { email: email };
-      const existingUser = await usersCollection.findOne(query);
-
-      if (existingUser) {
-        res.send({ message: 'User already exists', userId: existingUser._id });
-      } else {
-        const result = await usersCollection.insertOne(newUser);
-        res.send(result);
-      }
+    // Test route
+    app.get('/', (req, res) => {
+      res.send('Artify Server is running!');
     });
 
-    app.get('/artworks', async (req, res) => {
+    // Debug route to check all collections
+    app.get('/debug/collections', async (req, res) => {
       try {
-        const page = parseInt(req.query.page) || 1;
-        const limit = parseInt(req.query.limit) || 12;
-        const skip = (page - 1) * limit;
-        
-        const query = { visibility: 'Public' };
-        const cursor = artworksCollection.find(query).sort({ createdAt: -1 }).skip(skip).limit(limit);
-        const result = await cursor.toArray();
-        const total = await artworksCollection.countDocuments(query);
+        const collections = await db.listCollections().toArray();
+        const artworksCount = await artworksCollection.countDocuments();
+        const favoritesCount = await favoritesCollection.countDocuments();
+        const usersCount = await usersCollection.countDocuments();
         
         res.send({
-          artworks: result,
-          pagination: {
-            currentPage: page,
-            totalPages: Math.ceil(total / limit),
-            totalArtworks: total,
-            limit
+          collections: collections.map(c => c.name),
+          counts: {
+            artworks: artworksCount,
+            favorites: favoritesCount,
+            users: usersCount
           }
         });
       } catch (error) {
-        res.status(500).json({ error: 'Failed to fetch artworks', message: error.message });
+        res.status(500).send({ error: error.message });
       }
     });
 
-    app.get('/all-artworks', async (req, res) => {
+    // Debug route to check artwork IDs
+    app.get('/debug/artworks', async (req, res) => {
       try {
-        const query = { visibility: 'Public' };
-        const cursor = artworksCollection.find(query).sort({ createdAt: -1 });
-        const result = await cursor.toArray();
-        res.send(result);
+        const artworks = await artworksCollection.find({}).limit(5).toArray();
+        const artworkInfo = artworks.map(art => ({
+          id: art._id,
+          title: art.title,
+          idType: typeof art._id,
+          isValidObjectId: ObjectId.isValid(art._id)
+        }));
+        res.send(artworkInfo);
       } catch (error) {
-        res.status(500).json({ error: 'Failed to fetch artworks', message: error.message });
+        res.status(500).send({ error: error.message });
       }
     });
 
-    app.get('/featured-artworks', async (req, res) => {
-      const query = { visibility: 'Public' };
-      const cursor = artworksCollection.find(query).sort({ createdAt: -1 }).limit(6);
-      const result = await cursor.toArray();
-      res.send(result);
+    // Debug route to check all favorites
+    app.get('/debug/favorites', async (req, res) => {
+      try {
+        const favorites = await favoritesCollection.find({}).toArray();
+        res.send({
+          count: favorites.length,
+          favorites: favorites
+        });
+      } catch (error) {
+        res.status(500).send({ error: error.message });
+      }
     });
 
+    // Debug route to check all users
+    app.get('/debug/users', async (req, res) => {
+      try {
+        const users = await usersCollection.find({}).toArray();
+        res.send({
+          count: users.length,
+          users: users.map(user => ({ email: user.email, name: user.name, createdAt: user.createdAt }))
+        });
+      } catch (error) {
+        res.status(500).send({ error: error.message });
+      }
+    });
+
+    // Test endpoint for favorites (simplified)
+    app.post('/test-favorites', async (req, res) => {
+      try {
+        console.log('Test favorites endpoint called with body:', req.body);
+        
+        const testFavorite = {
+          userEmail: 'test@example.com',
+          artworkId: '507f1f77bcf86cd799439011',
+          addedAt: new Date()
+        };
+        
+        const result = await favoritesCollection.insertOne(testFavorite);
+        res.send({ 
+          success: true, 
+          message: 'Test favorite added', 
+          insertedId: result.insertedId,
+          testData: testFavorite
+        });
+      } catch (error) {
+        console.error('Test favorites error:', error);
+        res.status(500).send({ error: error.message });
+      }
+    });
+
+    // Get all public artworks with pagination (for Explore page)
+    app.get('/artworks', async (req, res) => {
+      try {
+        const { page = 1, limit = 12 } = req.query;
+        const skip = (page - 1) * limit;
+        
+        const artworks = await artworksCollection
+          .find({ visibility: 'Public' })
+          .sort({ createdAt: -1 })
+          .skip(skip)
+          .limit(parseInt(limit))
+          .toArray();
+        
+        const total = await artworksCollection.countDocuments({ visibility: 'Public' });
+        
+        res.send({
+          artworks,
+          currentPage: parseInt(page),
+          totalPages: Math.ceil(total / limit),
+          totalArtworks: total
+        });
+      } catch (error) {
+        console.error('Error fetching artworks:', error);
+        res.status(500).send({ message: 'Error fetching artworks' });
+      }
+    });
+
+    // Get latest artworks for home page (featured artworks)
     app.get('/latest-artworks', async (req, res) => {
       try {
-        console.log('Latest artworks endpoint called');
-        const query = { visibility: 'Public' };
-        const cursor = artworksCollection.find(query).sort({ createdAt: -1 }).limit(6);
-        const result = await cursor.toArray();
-        console.log(`Found ${result.length} artworks`);
-        res.send(result);
+        const artworks = await artworksCollection
+          .find({ visibility: 'Public' })
+          .sort({ createdAt: -1 })
+          .limit(6)
+          .toArray();
+        res.send(artworks);
       } catch (error) {
-        console.error('Latest artworks error:', error);
-        res.status(500).json({ error: 'Failed to fetch latest artworks', message: error.message });
+        console.error('Error fetching latest artworks:', error);
+        res.status(500).send({ message: 'Error fetching latest artworks' });
       }
     });
 
-    app.get('/my-artworks/:email', async (req, res) => {
-      const email = req.params.email;
-      const query = { artistEmail: email };
-      const cursor = artworksCollection.find(query).sort({ createdAt: -1 });
-      const result = await cursor.toArray();
-      res.send(result);
-    });
-
-    app.get('/artwork/:id', async (req, res) => {
-      const id = req.params.id;
-      const query = { _id: new ObjectId(id) };
-      const result = await artworksCollection.findOne(query);
-      res.send(result);
-    });
-
-    app.post('/artworks', validateArtwork, async (req, res) => {
+    // Get all artworks for explore page (without pagination for compatibility)
+    app.get('/all-artworks', async (req, res) => {
       try {
-        const newArtwork = req.body;
-        newArtwork.createdAt = new Date();
-        newArtwork.likes = 0;
-        const result = await artworksCollection.insertOne(newArtwork);
-        res.send(result);
+        const { search, category } = req.query;
+        let query = { visibility: 'Public' };
+        
+        // Search functionality
+        if (search) {
+          query.$or = [
+            { title: { $regex: search, $options: 'i' } },
+            { artistName: { $regex: search, $options: 'i' } },
+            { category: { $regex: search, $options: 'i' } }
+          ];
+        }
+        
+        // Category filter
+        if (category && category !== 'all') {
+          query.category = category;
+        }
+        
+        const artworks = await artworksCollection
+          .find(query)
+          .sort({ createdAt: -1 })
+          .toArray();
+        
+        res.send(artworks);
       } catch (error) {
-        res.status(500).json({ error: 'Failed to add artwork', message: error.message });
+        console.error('Error fetching all artworks:', error);
+        res.status(500).send({ message: 'Error fetching all artworks' });
       }
     });
 
+    // Get artwork by ID
+    app.get('/artwork/:id', async (req, res) => {
+      try {
+        const id = req.params.id;
+        const artwork = await artworksCollection.findOne({ _id: new ObjectId(id) });
+        if (!artwork) {
+          return res.status(404).send({ message: 'Artwork not found' });
+        }
+        res.send(artwork);
+      } catch (error) {
+        console.error('Error fetching artwork:', error);
+        res.status(500).send({ message: 'Error fetching artwork' });
+      }
+    });
+
+    // Get artworks by user email (My Gallery)
+    app.get('/my-artworks/:email', async (req, res) => {
+      try {
+        const email = req.params.email;
+        const artworks = await artworksCollection.find({ artistEmail: email }).sort({ createdAt: -1 }).toArray();
+        res.send(artworks);
+      } catch (error) {
+        console.error('Error fetching user artworks:', error);
+        res.status(500).send({ message: 'Error fetching user artworks' });
+      }
+    });
+
+    // Add new artwork
+    app.post('/artworks', async (req, res) => {
+      try {
+        const artwork = {
+          ...req.body,
+          createdAt: new Date(),
+          likes: 0,
+          likedBy: []
+        };
+        const result = await artworksCollection.insertOne(artwork);
+        res.send({ success: true, insertedId: result.insertedId, message: 'Artwork added successfully' });
+      } catch (error) {
+        console.error('Error adding artwork:', error);
+        res.status(500).send({ message: 'Error adding artwork' });
+      }
+    });
+
+    // Update artwork
     app.patch('/artwork/:id', async (req, res) => {
-      const id = req.params.id;
-      const updatedArtwork = req.body;
-      const query = { _id: new ObjectId(id) };
-      const update = {
-        $set: updatedArtwork
-      };
-      const result = await artworksCollection.updateOne(query, update);
-      res.send(result);
+      try {
+        const id = req.params.id;
+        const updatedArtwork = {
+          $set: {
+            ...req.body,
+            updatedAt: new Date()
+          }
+        };
+        const result = await artworksCollection.updateOne(
+          { _id: new ObjectId(id) },
+          updatedArtwork
+        );
+        
+        if (result.matchedCount === 0) {
+          return res.status(404).send({ message: 'Artwork not found' });
+        }
+        
+        res.send({ success: true, message: 'Artwork updated successfully' });
+      } catch (error) {
+        console.error('Error updating artwork:', error);
+        res.status(500).send({ message: 'Error updating artwork' });
+      }
     });
 
+    // Delete artwork
     app.delete('/artwork/:id', async (req, res) => {
-      const id = req.params.id;
-      const query = { _id: new ObjectId(id) };
-      const result = await artworksCollection.deleteOne(query);
-      res.send(result);
+      try {
+        const id = req.params.id;
+        const result = await artworksCollection.deleteOne({ _id: new ObjectId(id) });
+        
+        if (result.deletedCount === 0) {
+          return res.status(404).send({ message: 'Artwork not found' });
+        }
+        
+        res.send({ success: true, message: 'Artwork deleted successfully' });
+      } catch (error) {
+        console.error('Error deleting artwork:', error);
+        res.status(500).send({ message: 'Error deleting artwork' });
+      }
     });
 
+    // Like artwork
     app.patch('/artwork/:id/like', async (req, res) => {
-      const id = req.params.id;
-      const query = { _id: new ObjectId(id) };
-      const update = { $inc: { likes: 1 } };
-      const result = await artworksCollection.updateOne(query, update);
-      res.send(result);
+      try {
+        const artworkId = req.params.id;
+        
+        const result = await artworksCollection.updateOne(
+          { _id: new ObjectId(artworkId) },
+          { $inc: { likes: 1 } }
+        );
+        
+        if (result.matchedCount === 0) {
+          return res.status(404).send({ message: 'Artwork not found' });
+        }
+        
+        res.send({ success: true, message: 'Artwork liked successfully' });
+      } catch (error) {
+        console.error('Error liking artwork:', error);
+        res.status(500).send({ message: 'Error liking artwork' });
+      }
     });
 
+    // Search artworks by title or artist
     app.get('/artworks/search/:searchTerm', async (req, res) => {
-      const searchTerm = req.params.searchTerm;
-      const query = {
-        visibility: 'Public',
-        $or: [
-          { title: { $regex: searchTerm, $options: 'i' } },
-          { artistName: { $regex: searchTerm, $options: 'i' } }
-        ]
-      };
-      const cursor = artworksCollection.find(query);
-      const result = await cursor.toArray();
-      res.send(result);
+      try {
+        const searchTerm = req.params.searchTerm;
+        const query = {
+          visibility: 'Public',
+          $or: [
+            { title: { $regex: searchTerm, $options: 'i' } },
+            { userName: { $regex: searchTerm, $options: 'i' } }
+          ]
+        };
+        
+        const artworks = await artworksCollection.find(query).toArray();
+        res.send(artworks);
+      } catch (error) {
+        console.error('Error searching artworks:', error);
+        res.status(500).send({ message: 'Error searching artworks' });
+      }
     });
 
+    // Filter artworks by category
     app.get('/artworks/category/:category', async (req, res) => {
-      const category = req.params.category;
-      const query = { visibility: 'Public', category: category };
-      const cursor = artworksCollection.find(query).sort({ createdAt: -1 });
-      const result = await cursor.toArray();
-      res.send(result);
+      try {
+        const category = req.params.category;
+        const artworks = await artworksCollection
+          .find({ 
+            visibility: 'Public',
+            category: category
+          })
+          .sort({ createdAt: -1 })
+          .toArray();
+        res.send(artworks);
+      } catch (error) {
+        console.error('Error filtering artworks by category:', error);
+        res.status(500).send({ message: 'Error filtering artworks by category' });
+      }
     });
-    
+
+    // Get user favorites
+    app.get('/favorites/:email', async (req, res) => {
+      try {
+        const email = req.params.email;
+        console.log('Fetching favorites for email:', email);
+        
+        const favorites = await favoritesCollection.find({ userEmail: email }).toArray();
+        console.log('Found favorites:', favorites.length);
+        
+        if (favorites.length === 0) {
+          return res.send([]);
+        }
+        
+        // Validate and convert artwork IDs to ObjectId
+        const validArtworkIds = [];
+        for (const fav of favorites) {
+          try {
+            if (ObjectId.isValid(fav.artworkId)) {
+              validArtworkIds.push(new ObjectId(fav.artworkId));
+            } else {
+              console.log('Invalid artwork ID:', fav.artworkId);
+            }
+          } catch (error) {
+            console.log('Error converting artwork ID:', fav.artworkId, error);
+          }
+        }
+        
+        if (validArtworkIds.length === 0) {
+          return res.send([]);
+        }
+        
+        const artworks = await artworksCollection.find({
+          _id: { $in: validArtworkIds }
+        }).toArray();
+        
+        console.log('Found artworks:', artworks.length);
+        res.send(artworks);
+      } catch (error) {
+        console.error('Error fetching favorites:', error);
+        res.status(500).send({ message: 'Error fetching favorites' });
+      }
+    });
+
+    // Add to favorites
+    app.post('/favorites', async (req, res) => {
+      try {
+        const { userEmail, artworkId } = req.body;
+        
+        console.log('Adding to favorites:', { userEmail, artworkId });
+        
+        // Validate inputs
+        if (!userEmail || !artworkId) {
+          return res.status(400).send({ message: 'User email and artwork ID are required' });
+        }
+        
+        // Validate artwork ID format
+        if (!ObjectId.isValid(artworkId)) {
+          return res.status(400).send({ message: 'Invalid artwork ID format' });
+        }
+        
+        // Check if artwork exists
+        const artwork = await artworksCollection.findOne({ _id: new ObjectId(artworkId) });
+        if (!artwork) {
+          return res.status(404).send({ message: 'Artwork not found' });
+        }
+        
+        // Check if already in favorites
+        const existing = await favoritesCollection.findOne({ userEmail, artworkId });
+        if (existing) {
+          return res.status(400).send({ message: 'Already in favorites' });
+        }
+        
+        const favorite = {
+          userEmail,
+          artworkId,
+          addedAt: new Date()
+        };
+        
+        const result = await favoritesCollection.insertOne(favorite);
+        console.log('Favorite added successfully:', result.insertedId);
+        res.send({ success: true, message: 'Added to favorites successfully', insertedId: result.insertedId });
+      } catch (error) {
+        console.error('Error adding to favorites:', error);
+        res.status(500).send({ message: 'Error adding to favorites' });
+      }
+    });
+
+    // Remove from favorites
+    app.delete('/favorites', async (req, res) => {
+      try {
+        const { userEmail, artworkId } = req.body;
+        const result = await favoritesCollection.deleteOne({ userEmail, artworkId });
+        
+        if (result.deletedCount === 0) {
+          return res.status(404).send({ message: 'Favorite not found' });
+        }
+        
+        res.send({ success: true, message: 'Removed from favorites successfully' });
+      } catch (error) {
+        console.error('Error removing from favorites:', error);
+        res.status(500).send({ message: 'Error removing from favorites' });
+      }
+    });
+
+    // Create or get user
+    app.post('/users', async (req, res) => {
+      try {
+        const userData = req.body;
+        console.log('User registration/login attempt:', userData);
+        
+        // Check if user already exists
+        const existingUser = await usersCollection.findOne({ email: userData.email });
+        if (existingUser) {
+          console.log('Existing user found:', existingUser.email);
+          return res.send({ success: true, user: existingUser, message: 'User already exists' });
+        }
+        
+        // Create new user
+        const newUser = {
+          ...userData,
+          createdAt: new Date()
+        };
+        
+        const result = await usersCollection.insertOne(newUser);
+        console.log('New user created:', result.insertedId);
+        res.send({ success: true, user: newUser, message: 'User created successfully' });
+      } catch (error) {
+        console.error('Error creating/getting user:', error);
+        res.status(500).send({ message: 'Error creating/getting user' });
+      }
+    });
+
+    // Get total artworks statistics
     app.get('/stats/total-artworks', async (req, res) => {
       try {
-        const total = await artworksCollection.countDocuments({ visibility: 'Public' });
-        res.send({ total });
+        const totalArtworks = await artworksCollection.countDocuments({ visibility: 'Public' });
+        const totalUsers = await usersCollection.countDocuments();
+        const totalLikes = await artworksCollection.aggregate([
+          { $group: { _id: null, totalLikes: { $sum: '$likes' } } }
+        ]).toArray();
+        
+        res.send({
+          totalArtworks,
+          totalUsers,
+          totalLikes: totalLikes[0]?.totalLikes || 0
+        });
       } catch (error) {
-        res.status(500).json({ error: 'Failed to fetch statistics', message: error.message });
+        console.error('Error fetching statistics:', error);
+        res.status(500).send({ message: 'Error fetching statistics' });
       }
     });
 
+    // Get category statistics
     app.get('/stats/by-category', async (req, res) => {
       try {
-        const categories = await artworksCollection.aggregate([
+        const categoryStats = await artworksCollection.aggregate([
           { $match: { visibility: 'Public' } },
           { $group: { _id: '$category', count: { $sum: 1 } } },
           { $sort: { count: -1 } }
         ]).toArray();
+        
+        res.send(categoryStats);
+      } catch (error) {
+        console.error('Error fetching category statistics:', error);
+        res.status(500).send({ message: 'Error fetching category statistics' });
+      }
+    });
+
+    // Get categories (for filter dropdown)
+    app.get('/categories', async (req, res) => {
+      try {
+        const categories = await artworksCollection.distinct('category', { visibility: 'Public' });
         res.send(categories);
       } catch (error) {
-        res.status(500).json({ error: 'Failed to fetch category stats', message: error.message });
+        console.error('Error fetching categories:', error);
+        res.status(500).send({ message: 'Error fetching categories' });
       }
     });
 
-    app.post('/favorites', async (req, res) => {
-      const favorite = req.body;
-      const query = {
-        userEmail: favorite.userEmail,
-        artworkId: favorite.artworkId
-      };
-      const existingFavorite = await favoritesCollection.findOne(query);
-
-      if (existingFavorite) {
-        res.send({ message: 'Already in favorites' });
-      } else {
-        const result = await favoritesCollection.insertOne(favorite);
-        res.send(result);
-      }
+    // Health check
+    app.get('/health', (req, res) => {
+      res.send({ status: 'OK', timestamp: new Date().toISOString() });
     });
 
-    app.get('/favorites/:email', async (req, res) => {
-      const email = req.params.email;
-      const query = { userEmail: email };
-      const favorites = await favoritesCollection.find(query).toArray();
-      
-      const artworkIds = favorites.map(fav => new ObjectId(fav.artworkId));
-      const artworks = await artworksCollection.find({ _id: { $in: artworkIds } }).toArray();
-      
-      res.send(artworks);
+    // 404 handler for API routes
+    app.use('/api/*', (req, res) => {
+      res.status(404).json({ error: 'API endpoint not found', path: req.path });
     });
 
-    app.delete('/favorites', async (req, res) => {
-      const { userEmail, artworkId } = req.body;
-      const query = { userEmail: userEmail, artworkId: artworkId };
-      const result = await favoritesCollection.deleteOne(query);
-      res.send(result);
+    // Global error handler
+    app.use((err, req, res, next) => {
+      console.error('Global error handler:', err);
+      res.status(500).json({ error: 'Internal server error', message: err.message });
     });
-}
 
-async function run() {
-  try {
-    await client.connect();
-    await client.db("admin").command({ ping: 1 });
-    console.log("Successfully connected to MongoDB!");
+    // Catch all 404 handler
+    app.use('*', (req, res) => {
+      console.log(`404 - Route not found: ${req.method} ${req.originalUrl}`);
+      res.status(404).json({ error: 'Route not found', path: req.originalUrl, method: req.method });
+    });
 
-    const db = client.db('artisans_echo_db');
-    const { artworksCollection, usersCollection, favoritesCollection } = await initializeCollections(db);
-    setupDatabaseRoutes(artworksCollection, usersCollection, favoritesCollection);
+    // Send a ping to confirm a successful connection
+    // await client.db("admin").command({ ping: 1 });
+    // console.log("Successfully connected to MongoDB!");
 
   } catch (error) {
-    console.log("MongoDB connection failed:", error.message);
-    process.exit(1);
+    console.error('Error connecting to MongoDB:', error);
   }
 }
 
 run().catch(console.dir);
 
-app.use(errorHandler);
-
 app.listen(port, () => {
-  console.log(`Server is running on port ${port}`);
+  console.log(`Artify server is running on port ${port}`);
 });

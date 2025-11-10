@@ -1,23 +1,24 @@
 {
   "name": "artify-server-side",
   "version": "1.0.0",
-  "description": "Backend server for Artisan's Echo art platform",
+  "description": "Server side for Artify - A Creative Artwork Showcase Platform",
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
-    "dev": "nodemon index.js"
+    "dev": "nodemon index.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
   },
-  "keywords": [
-    "art",
-    "artworks",
-    "gallery"
-  ],
-  "author": "",
-  "license": "ISC",
+  "keywords": ["art", "gallery", "artwork", "showcase", "mongodb", "express"],
+  "author": "Nafiz",
+  "license": "MIT",
   "dependencies": {
+    "express": "^4.18.2",
+    "mongodb": "^6.3.0",
     "cors": "^2.8.5",
-    "dotenv": "^17.2.3",
-    "express": "^5.1.0",
-    "mongodb": "^7.0.0"
+    "dotenv": "^16.3.1",
+    "body-parser": "^1.20.2"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.2"
   }
 }
