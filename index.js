@@ -362,6 +362,15 @@ app.patch('/artwork/:id/like', async (req, res) => {
         const artworkId = req.params.id;
         const { userEmail, action } = req.body;
         
+        // First, ensure the artwork has likes field and likedBy array
+        await artworksCollection.updateOne(
+            { _id: new ObjectId(artworkId) },
+            {
+                $setOnInsert: { likes: 0, likedBy: [] }
+            },
+            { upsert: false }
+        );
+        
         let updateOperation;
         if (action === 'like') {
             updateOperation = {
