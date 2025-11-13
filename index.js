@@ -24,7 +24,7 @@ if (process.env.FB_SERVICE_KEY) {
 app.use(cors({
     origin: [
         "http://localhost:5173",
-        "http://localhost:3000",
+        "http://localhost:5000",
         "https://artify-client-side.web.app",
         "https://artify-client-side.firebaseapp.com"
     ],
