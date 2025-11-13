@@ -7,7 +7,6 @@ const port = process.env.PORT || 5000;
 
 const admin = require("firebase-admin");
 
-// Initialize Firebase Admin SDK for production
 if (process.env.FB_SERVICE_KEY) {
     try {
         const decoded = Buffer.from(process.env.FB_SERVICE_KEY, "base64").toString("utf8");
@@ -22,7 +21,6 @@ if (process.env.FB_SERVICE_KEY) {
     }
 }
 
-// middleware
 app.use(cors({
     origin: [
         "http://localhost:5173",
@@ -62,7 +60,6 @@ const client = new MongoClient(uri, {
     }
 });
 
-// Initialize database collections as variables
 let artworksCollection, favoritesCollection, usersCollection;
 
 app.get('/', (req, res) => {
@@ -73,17 +70,8 @@ app.get('/', (req, res) => {
     });
 })
 
-// Test endpoint to check if server is working
-app.get('/test', (req, res) => {
-    res.json({ message: 'Server is working', timestamp: new Date().toISOString() });
-})
 
-// Health check endpoint
-app.get('/health', (req, res) => {
-    res.json({ status: 'healthy', timestamp: new Date().toISOString() });
-})
 
-// USERS APIs
 app.post('/users', async (req, res) => {
     try {
         if (!usersCollection) {
@@ -108,7 +96,6 @@ app.post('/users', async (req, res) => {
     }
 })
 
-// ARTWORKS APIs
 app.get('/artworks', async (req, res) => {
     try {
         if (!artworksCollection) {
@@ -125,7 +112,6 @@ app.get('/artworks', async (req, res) => {
             query.artistEmail = email;
         }
         
-        // Search functionality
         if (search) {
             query.$or = [
                 { title: { $regex: search, $options: 'i' } },
@@ -134,7 +120,6 @@ app.get('/artworks', async (req, res) => {
             ];
         }
         
-        // Category filter
         if (category && category !== 'all') {
             query.category = category;
         }
@@ -144,22 +129,20 @@ app.get('/artworks', async (req, res) => {
         res.send(result)
     } catch (error) {
         console.error('Error in artworks endpoint:', error);
-        res.json([]);  // Return empty array instead of error object
+        res.json([]);
     }
 });
 
-// Get all artworks for explore page
 app.get('/all-artworks', async (req, res) => {
     try {
         if (!artworksCollection) {
-            return res.json([]);  // Return empty array instead of error object
+            return res.json([]);
         }
         
         const search = req.query.search;
         const category = req.query.category;
         let query = {};
         
-        // Search functionality
         if (search) {
             query.$or = [
                 { title: { $regex: search, $options: 'i' } },
@@ -168,7 +151,6 @@ app.get('/all-artworks', async (req, res) => {
             ];
         }
         
-        // Category filter
         if (category && category !== 'all') {
             query.category = category;
         }
@@ -178,7 +160,7 @@ app.get('/all-artworks', async (req, res) => {
         res.send(result);
     } catch (error) {
         console.error('Error in all-artworks endpoint:', error);
-        res.json([]);  // Return empty array instead of error object
+        res.json([]);
     }
 });
 
@@ -189,7 +171,7 @@ app.get('/latest-artworks', async (req, res) => {
         
         if (!artworksCollection) {
             console.log('Database not ready, returning empty array');
-            return res.json([]);  // Return empty array instead of error object
+            return res.json([]);
         }
         
         const cursor = artworksCollection.find().sort({ createdAt: -1 }).limit(6);
@@ -198,11 +180,10 @@ app.get('/latest-artworks', async (req, res) => {
         res.send(result);
     } catch (error) {
         console.error('Error in latest-artworks endpoint:', error);
-        res.status(500).json([]);  // Return empty array instead of error object
+        res.status(500).json([]);
     }
 })
 
-// Get top artists by total artworks and likes
 app.get('/top-artists', async (req, res) => {
     try {
         console.log('Top artists endpoint called');
@@ -212,7 +193,6 @@ app.get('/top-artists', async (req, res) => {
             return res.json([]);
         }
         
-        // Aggregate artworks by artist email to get counts and total likes
         const topArtists = await artworksCollection.aggregate([
             {
                 $group: {
@@ -308,7 +288,6 @@ app.patch('/artwork/:id', verifyFireBaseToken, async (req, res) => {
         const updatedArtwork = req.body;
         const query = { _id: new ObjectId(id) }
         
-        // Check if user owns the artwork
         const artwork = await artworksCollection.findOne(query);
         if (artwork.artistEmail !== req.token_email) {
             return res.status(403).send({ message: 'forbidden access' });
@@ -338,7 +317,6 @@ app.delete('/artwork/:id', verifyFireBaseToken, async (req, res) => {
         const id = req.params.id;
         const query = { _id: new ObjectId(id) }
         
-        // Check if user owns the artwork
         const artwork = await artworksCollection.findOne(query);
         if (artwork.artistEmail !== req.token_email) {
             return res.status(403).send({ message: 'forbidden access' });
@@ -352,7 +330,6 @@ app.delete('/artwork/:id', verifyFireBaseToken, async (req, res) => {
     }
 })
 
-// Like/Unlike artwork
 app.patch('/artwork/:id/like', async (req, res) => {
     try {
         if (!artworksCollection) {
@@ -362,7 +339,6 @@ app.patch('/artwork/:id/like', async (req, res) => {
         const artworkId = req.params.id;
         const { userEmail, action } = req.body;
         
-        // First, ensure the artwork has likes field and likedBy array
         await artworksCollection.updateOne(
             { _id: new ObjectId(artworkId) },
             {
@@ -396,11 +372,10 @@ app.patch('/artwork/:id/like', async (req, res) => {
     }
 })
 
-// FAVORITES APIs
 app.get('/favorites/:email', async (req, res) => {
     try {
         if (!favoritesCollection || !artworksCollection) {
-            return res.json([]);  // Return empty array instead of error object
+            return res.json([]);
         }
         
         const email = req.params.email;
@@ -428,7 +403,7 @@ app.get('/favorites/:email', async (req, res) => {
         res.send(artworks);
     } catch (error) {
         console.error('Error fetching favorites:', error);
-        res.json([]);  // Return empty array instead of error object
+        res.json([]);
     }
 })
 
@@ -440,7 +415,6 @@ app.post('/favorites', async (req, res) => {
         
         const { userEmail, artworkId } = req.body;
         
-        // Check if already in favorites
         const existing = await favoritesCollection.findOne({ userEmail, artworkId });
         if (existing) {
             return res.status(400).send({ message: 'Already in favorites' });
@@ -475,7 +449,6 @@ app.delete('/favorites', async (req, res) => {
     }
 })
 
-// Get categories
 app.get('/categories', async (req, res) => {
     try {
         if (!artworksCollection) {
@@ -493,7 +466,9 @@ app.get('/categories', async (req, res) => {
 async function run() {
     try {
         console.log('Attempting to connect to MongoDB...');
-        await client.connect();
+        // await client.connect();
+        // await client.db("admin").command({ ping: 1 });
+
         console.log('Connected to MongoDB successfully');
 
         const db = client.db('artifyDB');
@@ -504,7 +479,6 @@ async function run() {
         console.log("Successfully connected to MongoDB!");
         console.log("Collections initialized and routes are ready!");
 
-        // Test the connection by counting documents
         try {
             const artworkCount = await artworksCollection.countDocuments();
             console.log(`Found ${artworkCount} artworks in database`);
@@ -515,7 +489,6 @@ async function run() {
     } catch (error) {
         console.error('Database connection error:', error);
         console.log('Server will continue to run, but will return empty arrays until DB is ready');
-        // Retry connection after 5 seconds
         setTimeout(() => {
             console.log('Retrying database connection...');
             run();
@@ -523,7 +496,6 @@ async function run() {
     }
 }
 
-// Start database connection immediately
 run().catch(console.dir);
 
 app.listen(port, () => {
